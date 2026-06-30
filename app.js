@@ -23,6 +23,7 @@ const state = {
   parentTips: false,
   isAdvancing: false,
   animationToken: 0,
+  session: createSession(),
   currentQuestion: null,
   progress: loadProgress()
 };
@@ -54,12 +55,20 @@ const els = {
   nextBtn: document.querySelector("#nextBtn"),
   summaryTitle: document.querySelector("#summaryTitle"),
   summaryText: document.querySelector("#summaryText"),
-  progressBars: document.querySelector("#progressBars")
+  progressBars: document.querySelector("#progressBars"),
+  sessionStats: document.querySelector("#sessionStats"),
+  todayStats: document.querySelector("#todayStats"),
+  wrongCount: document.querySelector("#wrongCount"),
+  wrongBookList: document.querySelector("#wrongBookList"),
+  operatorKeys: document.querySelectorAll("[data-operator-key]")
 };
 
 function defaultProgress() {
   return {
     profile: "sister",
+    daily: {},
+    wrongBook: [],
+    sessions: [],
     skills: Object.fromEntries(
       Object.keys(games).map((key) => [key, { attempts: 0, supported: 0 }])
     )
@@ -74,6 +83,9 @@ function loadProgress() {
     return {
       ...base,
       ...saved,
+      daily: { ...base.daily, ...(saved.daily || {}) },
+      wrongBook: Array.isArray(saved.wrongBook) ? saved.wrongBook : [],
+      sessions: Array.isArray(saved.sessions) ? saved.sessions : [],
       skills: { ...base.skills, ...(saved.skills || {}) }
     };
   } catch (error) {
@@ -84,7 +96,47 @@ function loadProgress() {
 
 function saveProgress() {
   state.progress.profile = state.profile;
+  upsertCurrentSession();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.progress));
+}
+
+function createSession() {
+  const now = new Date();
+  return {
+    id: `${now.getTime()}-${Math.random().toString(16).slice(2)}`,
+    date: dateKey(now),
+    startedAt: now.toISOString(),
+    attempts: 0,
+    correct: 0,
+    wrong: 0
+  };
+}
+
+function dateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function timeLabel(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function emptyRecord() {
+  return { attempts: 0, correct: 0, wrong: 0 };
+}
+
+function upsertCurrentSession() {
+  const sessions = Array.isArray(state.progress.sessions) ? state.progress.sessions : [];
+  const index = sessions.findIndex((session) => session.id === state.session.id);
+  const snapshot = { ...state.session };
+  if (index >= 0) {
+    sessions[index] = snapshot;
+  } else {
+    sessions.unshift(snapshot);
+  }
+  state.progress.sessions = sessions.slice(0, 30);
 }
 
 function randInt(min, max) {
@@ -243,7 +295,12 @@ function resetTypedAdvanceState() {
 }
 
 function makePracticeQuestion() {
-  return Math.random() < 0.5 ? makeEquationAddQuestion() : makeEquationSubtractQuestion();
+  const roll = Math.random();
+  if (roll < 0.26) return makeEquationAddQuestion();
+  if (roll < 0.52) return makeEquationSubtractQuestion();
+  if (roll < 0.7) return makeMissingAddendQuestion();
+  if (roll < 0.88) return makeMissingSubtrahendQuestion();
+  return makeMissingOperatorQuestion();
 }
 
 function makeEquationAddQuestion() {
@@ -267,14 +324,14 @@ function makeEquationAddQuestion() {
   const teachSteps = useCountOn
     ? [
         `从比较大的数 ${left} 开始。`,
-        `往后数 ${right} 个：${makeCountingSequence(left + 1, answer).join("、")}。`,
-        `最后数到 ${answer}，所以答案是 ${answer}。`
+        `伸出手指往后数 ${right} 个。`,
+        "停在哪个数，就把那个数写进答案框。"
       ]
     : [
         `${left} 离 10 还差 ${toTen}。`,
         `把 ${right} 分成 ${toTen} 和 ${rest}。`,
         `${left} + ${toTen} = 10。`,
-        `10 + ${rest} = ${answer}。`
+        `再想 10 + ${rest} 是多少，自己写出来。`
       ];
 
   return {
@@ -322,18 +379,18 @@ function makeEquationSubtractQuestion() {
         `把 ${start} - ${gone} 想成：${gone} + ? = ${start}。`,
         `${gone} 先加到 10，需要 ${10 - gone}。`,
         `10 再加到 ${start}，需要 ${start - 10}。`,
-        `${10 - gone} + ${start - 10} = ${answer}。`
+        "把两次补上的数合起来，再写进答案框。"
       ]
     : useBreakTen
       ? [
           `${start} 先减 ${toTen}，正好到 10。`,
           `${gone} 已经减了 ${toTen}，还要再减 ${rest}。`,
-          `10 - ${rest} = ${answer}。`
+          `再想 10 - ${rest} 是多少，自己写出来。`
         ]
       : [
           `从 ${start} 开始往回数。`,
-          `往回数 ${gone} 个：${makeCountingSequence(start - 1, answer, -1).join("、")}。`,
-          `最后停在 ${answer}，所以答案是 ${answer}。`
+          `伸出手指往回数 ${gone} 个。`,
+          "停在哪个数，就把那个数写进答案框。"
         ];
 
   return {
@@ -360,6 +417,117 @@ function makeEquationSubtractQuestion() {
   };
 }
 
+function makeMissingAddendQuestion() {
+  const left = randInt(11, 18);
+  const answer = randInt(1, Math.min(8, 20 - left));
+  const total = left + answer;
+  const sequence = makeCountingSequence(left + 1, total);
+
+  return {
+    type: "equation",
+    operation: "missingAddend",
+    left,
+    right: total,
+    answer,
+    expression: `${left} + ? = ${total}`,
+    choices: buildChoices(answer, 0, 20),
+    kicker: "找一找，缺几个",
+    text: "问号表示缺少的数，把它写出来。",
+    feedback: `对了，${left} + ${answer} = ${total}。`,
+    tryAgain: "我们从前面的数开始，数到后面的数。",
+    strategyName: "接着数找缺数",
+    teachSteps: [
+      `从 ${left} 开始，看要到 ${total}。`,
+      `一个一个往后数：${sequence.join("、")}。`,
+      "数了几步，问号就是几。请自己写出来。"
+    ],
+    visualModel: "missingAddend",
+    animationPlan: buildFindAddendPlan(left, total, answer),
+    helper: "家长提示：把“加几等于”说成“从前面的数走到后面的数，要走几步”。"
+  };
+}
+
+function makeMissingSubtrahendQuestion() {
+  const remaining = randInt(5, 10);
+  const answer = randInt(3, 9);
+  const start = remaining + answer;
+
+  return {
+    type: "equation",
+    operation: "missingSubtrahend",
+    left: start,
+    right: remaining,
+    answer,
+    expression: `${start} - ? = ${remaining}`,
+    choices: buildChoices(answer, 0, 20),
+    kicker: "想一想，拿走几个",
+    text: "问号表示拿走的数，把它写出来。",
+    feedback: `对了，${start} - ${answer} = ${remaining}。`,
+    tryAgain: "我们把减法换成加法想一想。",
+    strategyName: "想加算减",
+    teachSteps: [
+      `把 ${start} - ? = ${remaining} 想成：${remaining} + ? = ${start}。`,
+      `${remaining} 先补到 10，需要 ${10 - remaining}。`,
+      `10 再补到 ${start}，需要 ${start - 10}。`,
+      "把两次补上的数合起来，就是问号。请自己写出来。"
+    ],
+    visualModel: "missingSubtrahend",
+    animationPlan: buildThinkAddPlan(remaining, answer, start),
+    helper: "家长提示：这类题不要硬背减法，先问“剩下的数再加几个能回到原来的数？”"
+  };
+}
+
+function makeMissingOperatorQuestion() {
+  const useSubtract = Math.random() < 0.55;
+  let left;
+  let right;
+  let result;
+  let answer;
+
+  if (useSubtract) {
+    left = randInt(10, 19);
+    right = randInt(2, Math.min(9, left));
+    result = left - right;
+    answer = "-";
+  } else {
+    left = randInt(5, 12);
+    right = randInt(2, Math.min(9, 20 - left));
+    result = left + right;
+    answer = "+";
+  }
+
+  const grows = result > left;
+  return {
+    type: "equation",
+    operation: "missingOperator",
+    answerKind: "operator",
+    left,
+    right,
+    result,
+    answer,
+    expression: `${left} ? ${right} = ${result}`,
+    kicker: "找符号",
+    text: "中间应该写加号还是减号？",
+    feedback: `对了，${left} ${answer} ${right} = ${result}。`,
+    tryAgain: "先看结果是变多了，还是变少了。",
+    strategyName: "看变化找符号",
+    teachSteps: grows
+      ? [
+          `先看第一个数 ${left}。`,
+          `最后变成 ${result}，结果比 ${left} 大。`,
+          "数变多了，想一想应该用表示合起来的符号。"
+        ]
+      : [
+          `先看第一个数 ${left}。`,
+          `最后变成 ${result}，结果比 ${left} 小。`,
+          "数变少了，想一想应该用表示拿走的符号。"
+        ],
+    visualModel: "missingOperator",
+    animationPlan: buildFindOperatorPlan(left, right, result, grows),
+    helper: "家长提示：这类题先不算答案，先问孩子“结果变大还是变小”。"
+  };
+}
+
 function buildMakeTenPlan(left, right, answer) {
   const toTen = 10 - left;
   const rest = right - toTen;
@@ -369,7 +537,7 @@ function buildMakeTenPlan(left, right, answer) {
       { text: `先看 ${left}，还差 ${toTen} 个到 10。`, action: "start" },
       { text: `把 ${right} 分成 ${toTen} 和 ${rest}。`, action: "split" },
       { text: `${left} 加 ${toTen}，正好是 10。`, action: "fillTen" },
-      { text: `10 再加 ${rest}，就是 ${answer}。`, action: "finish" }
+      { text: `再想 10 加 ${rest} 是多少。`, action: "finish" }
     ]
   };
 }
@@ -380,8 +548,36 @@ function buildCountOnPlan(left, right, answer) {
     steps: [
       { text: `从大的数 ${left} 开始。`, action: "start" },
       { text: `往后数 ${right} 个。`, action: "jump" },
-      { text: `最后到 ${answer}，答案就是 ${answer}。`, action: "finish" }
+      { text: "停在哪个数，就把哪个数写出来。", action: "finish" }
     ]
+  };
+}
+
+function buildFindAddendPlan(left, total, answer) {
+  return {
+    type: "findAddend",
+    steps: [
+      { text: `从 ${left} 开始。`, action: "start" },
+      { text: `往后数到 ${total}。`, action: "jump" },
+      { text: "走了几步，问号就是几。", action: "finish" }
+    ]
+  };
+}
+
+function buildFindOperatorPlan(left, right, result, grows) {
+  return {
+    type: "findOperator",
+    steps: grows
+      ? [
+          { text: `先看 ${left}。`, action: "start" },
+          { text: `最后变成 ${result}，数变大了。`, action: "compare" },
+          { text: "数变大，想一想用哪个符号表示合起来。", action: "finish" }
+        ]
+      : [
+          { text: `先看 ${left}。`, action: "start" },
+          { text: `最后变成 ${result}，数变小了。`, action: "compare" },
+          { text: "数变小，想一想用哪个符号表示拿走。", action: "finish" }
+        ]
   };
 }
 
@@ -394,7 +590,7 @@ function buildBreakTenPlan(start, gone, answer) {
       { text: `先把 ${start} 看成 10 和 ${toTen}。`, action: "split" },
       { text: `先减 ${toTen}，回到 10。`, action: "toTen" },
       { text: `还要再减 ${rest}。`, action: "rest" },
-      { text: `10 减 ${rest}，就是 ${answer}。`, action: "finish" }
+      { text: `再想 10 减 ${rest} 是多少。`, action: "finish" }
     ]
   };
 }
@@ -406,7 +602,7 @@ function buildThinkAddPlan(part, missing, total) {
       { text: `把减法想成加法，${part} 加几等于 ${total}？`, action: "start" },
       { text: `${part} 先补到 10。`, action: "toTen" },
       { text: `再从 10 补到 ${total}。`, action: "toTotal" },
-      { text: `一共补了 ${missing}，答案就是 ${missing}。`, action: "finish" }
+      { text: "把补上的数合起来，再写出来。", action: "finish" }
     ]
   };
 }
@@ -417,7 +613,7 @@ function buildCountBackPlan(start, gone, answer) {
     steps: [
       { text: `从 ${start} 开始。`, action: "start" },
       { text: `往回数 ${gone} 个。`, action: "jump" },
-      { text: `最后到 ${answer}，答案就是 ${answer}。`, action: "finish" }
+      { text: "停在哪个数，就把哪个数写出来。", action: "finish" }
     ]
   };
 }
@@ -667,6 +863,11 @@ function renderAnswerArea(question) {
 
   if (isTypedPractice()) {
     els.answerInput.value = "";
+    els.answerInput.inputMode = question.answerKind === "operator" ? "text" : "numeric";
+    els.answerInput.placeholder = question.answerKind === "operator" ? "+ 或 -" : "0-20";
+    els.operatorKeys.forEach((button) => {
+      button.hidden = question.answerKind !== "operator";
+    });
     els.answerInput.focus({ preventScroll: true });
     return;
   }
@@ -740,15 +941,11 @@ function checkTypedAnswer() {
     return;
   }
 
-  const typed = Number(raw);
-  if (!Number.isInteger(typed) || typed < 0 || typed > 20) {
-    els.feedback.textContent = "这次只练 0 到 20 以内的答案。";
-    hideTeachCard();
-    return;
-  }
+  const typed = normalizeTypedAnswer(raw, question);
+  if (typed === null) return;
 
   const isCorrect = typed === question.answer;
-  recordAttempt(isCorrect);
+  recordAttempt(isCorrect, question, raw);
 
   if (isCorrect) {
     state.isAdvancing = true;
@@ -778,12 +975,72 @@ function checkTypedAnswer() {
   renderProgress();
 }
 
-function recordAttempt(isSupported) {
+function normalizeTypedAnswer(raw, question) {
+  if (question.answerKind === "operator") {
+    const value = raw.replace(/[＋﹢]/g, "+").replace(/[－−—]/g, "-");
+    if (value !== "+" && value !== "-") {
+      els.feedback.textContent = "这题写 + 或 -。";
+      hideTeachCard();
+      return null;
+    }
+    return value;
+  }
+
+  if (/^[+-]$/.test(raw)) {
+    els.feedback.textContent = "这题写 0 到 20 以内的数字。";
+    hideTeachCard();
+    return null;
+  }
+
+  const typed = Number(raw);
+  if (!Number.isInteger(typed) || typed < 0 || typed > 20) {
+    els.feedback.textContent = "这次只练 0 到 20 以内的答案。";
+    hideTeachCard();
+    return null;
+  }
+  return typed;
+}
+
+function recordAttempt(isSupported, question = null, childAnswer = "") {
   const skill = state.progress.skills[state.game] || { attempts: 0, supported: 0 };
+  const isCorrect = Boolean(isSupported);
   skill.attempts += 1;
-  if (isSupported) skill.supported += 1;
+  if (isCorrect) skill.supported += 1;
   state.progress.skills[state.game] = skill;
+
+  const today = dateKey();
+  const daily = state.progress.daily[today] || emptyRecord();
+  daily.attempts += 1;
+  if (isCorrect) {
+    daily.correct += 1;
+    state.session.correct += 1;
+  } else {
+    daily.wrong += 1;
+    state.session.wrong += 1;
+  }
+  state.session.attempts += 1;
+  state.progress.daily[today] = daily;
+
+  if (!isCorrect && question && isTypedPractice()) {
+    addWrongQuestion(question, childAnswer);
+  }
   saveProgress();
+}
+
+function addWrongQuestion(question, childAnswer) {
+  const wrongBook = Array.isArray(state.progress.wrongBook) ? state.progress.wrongBook : [];
+  const now = new Date();
+  wrongBook.unshift({
+    id: `${now.getTime()}-${Math.random().toString(16).slice(2)}`,
+    date: dateKey(now),
+    time: timeLabel(now),
+    expression: question.expression,
+    childAnswer: String(childAnswer).trim(),
+    expected: String(question.answer),
+    operation: question.operation,
+    strategyName: question.strategyName
+  });
+  state.progress.wrongBook = wrongBook.slice(0, 40);
 }
 
 function showTeachCard(question) {
@@ -846,10 +1103,12 @@ function renderAnimationFrame(question, activeIndex) {
   if (!plan) return;
 
   if (plan.type === "makeTen") renderMakeTenAnimation(question, activeIndex);
-  if (plan.type === "countOn") renderNumberLineAnimation(question.left, question.answer, activeIndex);
+  if (plan.type === "countOn") renderCountOnAnimation(question, activeIndex);
+  if (plan.type === "findAddend") renderFindAddendAnimation(question, activeIndex);
+  if (plan.type === "findOperator") renderFindOperatorAnimation(question, activeIndex);
   if (plan.type === "breakTen") renderBreakTenAnimation(question, activeIndex);
   if (plan.type === "thinkAdd") renderThinkAddAnimation(question, activeIndex);
-  if (plan.type === "countBack") renderNumberLineAnimation(question.answer, question.left, activeIndex, true);
+  if (plan.type === "countBack") renderCountBackAnimation(question, activeIndex);
 }
 
 function renderMakeTenAnimation(question, activeIndex) {
@@ -860,7 +1119,7 @@ function renderMakeTenAnimation(question, activeIndex) {
   row.appendChild(tenFrame(question.left, activeIndex >= 2 ? toTen : 0));
   row.appendChild(teachEquation("+"));
   row.appendChild(tokenGroup(question.right, activeIndex >= 1 ? `${toTen} 和 ${rest}` : `${question.right}`));
-  if (activeIndex >= 3) row.appendChild(teachEquation(`= ${question.answer}`));
+  if (activeIndex >= 3) row.appendChild(teachEquation(`10 + ${rest} = ?`));
   els.animationStage.appendChild(row);
 }
 
@@ -875,7 +1134,7 @@ function renderBreakTenAnimation(question, activeIndex) {
   row.appendChild(numberToken(toTen));
   if (activeIndex >= 1) row.appendChild(teachEquation(`先减 ${toTen}`));
   if (activeIndex >= 2) row.appendChild(teachEquation(`再减 ${rest}`));
-  if (activeIndex >= 3) row.appendChild(teachEquation(`= ${question.answer}`));
+  if (activeIndex >= 3) row.appendChild(teachEquation(`10 - ${rest} = ?`));
   els.animationStage.appendChild(row);
 }
 
@@ -887,7 +1146,46 @@ function renderThinkAddAnimation(question, activeIndex) {
   row.appendChild(teachEquation(`${question.right} + ? = ${question.left}`));
   if (activeIndex >= 1) row.appendChild(teachEquation(`+ ${toTen} 到 10`));
   if (activeIndex >= 2) row.appendChild(teachEquation(`+ ${toTotal} 到 ${question.left}`));
-  if (activeIndex >= 3) row.appendChild(teachEquation(`一共 ${question.answer}`));
+  if (activeIndex >= 3) row.appendChild(teachEquation("合起来是几？"));
+  els.animationStage.appendChild(row);
+}
+
+function renderFindAddendAnimation(question, activeIndex) {
+  const row = document.createElement("div");
+  row.className = "decompose-row";
+  row.appendChild(teachEquation(`${question.left} + ? = ${question.right}`));
+  if (activeIndex >= 1) row.appendChild(teachEquation(`数到 ${question.right}`));
+  if (activeIndex >= 2) row.appendChild(teachEquation("数一数走了几步"));
+  els.animationStage.appendChild(row);
+  renderNumberLineAnimation(question.left, question.right, activeIndex);
+}
+
+function renderFindOperatorAnimation(question, activeIndex) {
+  const row = document.createElement("div");
+  row.className = "decompose-row";
+  row.appendChild(teachEquation(`${question.left} ? ${question.right} = ${question.result}`));
+  if (activeIndex >= 1) {
+    row.appendChild(teachEquation(question.result > question.left ? "结果变大" : "结果变小"));
+  }
+  if (activeIndex >= 2) row.appendChild(teachEquation("想想该用哪个符号"));
+  els.animationStage.appendChild(row);
+}
+
+function renderCountOnAnimation(question, activeIndex) {
+  const row = document.createElement("div");
+  row.className = "decompose-row";
+  row.appendChild(teachEquation(`${question.left} + ${question.right} = ?`));
+  if (activeIndex >= 1) row.appendChild(teachEquation(`往后数 ${question.right} 个`));
+  if (activeIndex >= 2) row.appendChild(teachEquation("停在哪个数？"));
+  els.animationStage.appendChild(row);
+}
+
+function renderCountBackAnimation(question, activeIndex) {
+  const row = document.createElement("div");
+  row.className = "decompose-row";
+  row.appendChild(teachEquation(`${question.left} - ${question.right} = ?`));
+  if (activeIndex >= 1) row.appendChild(teachEquation(`往回数 ${question.right} 个`));
+  if (activeIndex >= 2) row.appendChild(teachEquation("停在哪个数？"));
   els.animationStage.appendChild(row);
 }
 
@@ -936,16 +1234,31 @@ function renderTeachVisual(question) {
   if (question.visualModel === "makeTen") {
     row.appendChild(tenFrame(question.left, 10 - question.left));
     row.appendChild(teachEquation(`${question.left} + ${10 - question.left} = 10`));
-    row.appendChild(teachEquation(`10 + ${question.answer - 10} = ${question.answer}`));
+    row.appendChild(teachEquation(`10 + ${question.answer - 10} = ?`));
   } else if (question.visualModel === "breakTen") {
     row.appendChild(teachEquation(`${question.left} - ${question.right} = ?`));
     row.appendChild(teachEquation(`${question.left} - ${question.left - 10} = 10`));
-    row.appendChild(teachEquation(`10 - ${10 - question.answer} = ${question.answer}`));
+    row.appendChild(teachEquation(`10 - ${10 - question.answer} = ?`));
   } else if (question.visualModel === "thinkAdd") {
     row.appendChild(teachEquation(`${question.right} + ? = ${question.left}`));
-    row.appendChild(tenFrame(question.right, question.answer));
+    row.appendChild(teachEquation("先补到 10，再补到原来的数"));
+  } else if (question.visualModel === "missingAddend") {
+    row.appendChild(teachEquation(`${question.left} + ? = ${question.right}`));
+    row.appendChild(teachEquation("从前面的数数到后面的数"));
+  } else if (question.visualModel === "missingSubtrahend") {
+    row.appendChild(teachEquation(`${question.left} - ? = ${question.right}`));
+    row.appendChild(teachEquation(`${question.right} + ? = ${question.left}`));
+  } else if (question.visualModel === "missingOperator") {
+    row.appendChild(teachEquation(`${question.left} ? ${question.right} = ${question.result}`));
+    row.appendChild(teachEquation(question.result > question.left ? "结果变大" : "结果变小"));
+  } else if (question.visualModel === "countOn") {
+    row.appendChild(teachEquation(`${question.left} + ${question.right} = ?`));
+    row.appendChild(teachEquation(`从 ${question.left} 往后数 ${question.right} 个`));
+  } else if (question.visualModel === "countBack") {
+    row.appendChild(teachEquation(`${question.left} - ${question.right} = ?`));
+    row.appendChild(teachEquation(`从 ${question.left} 往回数 ${question.right} 个`));
   } else {
-    row.appendChild(teachEquation(question.expression.replace("?", question.answer)));
+    row.appendChild(teachEquation(question.expression));
   }
 
   els.teachVisual.appendChild(row);
@@ -988,6 +1301,9 @@ function showRoundSummary() {
 }
 
 function renderProgress() {
+  const today = state.progress.daily[dateKey()] || emptyRecord();
+  els.sessionStats.textContent = formatRecord(state.session);
+  els.todayStats.textContent = formatRecord(today);
   els.progressBars.innerHTML = "";
   Object.entries(games).forEach(([key, game]) => {
     const item = state.progress.skills[key] || { attempts: 0, supported: 0 };
@@ -1002,6 +1318,35 @@ function renderProgress() {
       <div class="bar-track"><div class="bar-fill" style="width: ${percent}%"></div></div>
     `;
     els.progressBars.appendChild(row);
+  });
+  renderWrongBook();
+}
+
+function formatRecord(record) {
+  return `${record.attempts || 0} 题 · 对 ${record.correct || 0} · 再想 ${record.wrong || 0}`;
+}
+
+function renderWrongBook() {
+  const wrongBook = Array.isArray(state.progress.wrongBook) ? state.progress.wrongBook : [];
+  els.wrongCount.textContent = wrongBook.length ? `${wrongBook.length} 道待复习` : "还没有错题";
+  els.wrongBookList.innerHTML = "";
+
+  if (!wrongBook.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-wrong";
+    empty.textContent = "现在还没有错题。答错的题会自动放到这里。";
+    els.wrongBookList.appendChild(empty);
+    return;
+  }
+
+  wrongBook.slice(0, 6).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "wrong-item";
+    row.innerHTML = `
+      <div class="wrong-expression">${item.expression}</div>
+      <div class="wrong-meta">${item.date} ${item.time} · 当时写了 ${item.childAnswer || "空"} · ${item.strategyName || "看方法"}</div>
+    `;
+    els.wrongBookList.appendChild(row);
   });
 }
 
@@ -1054,10 +1399,19 @@ els.numberPad.addEventListener("click", (event) => {
   if (state.isAdvancing) return;
   const key = event.target.dataset.key;
   if (!key) return;
+  const isOperatorQuestion = state.currentQuestion?.answerKind === "operator";
   if (key === "clear") {
     els.answerInput.value = "";
   } else if (key === "back") {
     els.answerInput.value = els.answerInput.value.slice(0, -1);
+  } else if (key === "+" || key === "-") {
+    if (isOperatorQuestion) {
+      els.answerInput.value = key;
+    } else {
+      els.feedback.textContent = "这题写数字就可以。";
+    }
+  } else if (isOperatorQuestion) {
+    els.feedback.textContent = "这题写 + 或 -。";
   } else if (els.answerInput.value.length < 2) {
     els.answerInput.value += key;
   }
