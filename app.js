@@ -24,6 +24,7 @@ const state = {
   isAdvancing: false,
   animationToken: 0,
   session: createSession(),
+  celebratedCorrectCounts: new Set(),
   currentQuestion: null,
   progress: loadProgress()
 };
@@ -185,7 +186,16 @@ function pickChineseVoice() {
   const voices = window.speechSynthesis.getVoices();
   const chineseVoices = voices.filter((voice) => /zh|cmn|mandarin/i.test(`${voice.lang} ${voice.name}`));
   if (!chineseVoices.length) return null;
-  const priorities = [/ting-?ting/i, /meijia/i, /xiaoxiao/i, /female/i, /普通话|国语/i, /zh-cn/i];
+  const priorities = [
+    /xiaoxiao/i,
+    /xiaoyi/i,
+    /xiaobei/i,
+    /ting-?ting/i,
+    /meijia/i,
+    /female/i,
+    /普通话|国语/i,
+    /zh-cn/i
+  ];
   return [...chineseVoices].sort((a, b) => {
     const score = (voice) => {
       const haystack = `${voice.name} ${voice.lang}`;
@@ -234,22 +244,58 @@ function speakText(text, onDone, options = {}) {
 function speakFeedback(kind, onDone) {
   const phrases = {
     correct: [
-      "答对啦，真棒！",
-      "你想得很清楚！",
-      "很好，我们去下一题。"
+      "哇，答对啦，真不错！",
+      "嗯，想得很清楚，答对啦！",
+      "叮咚，答对啦，我们去下一题！",
+      "太好啦，这题你自己想出来了！"
     ],
     tryAgain: [
-      "没关系，再试一次。",
-      "先看看方法，再写一遍。",
-      "慢慢来，你可以的。"
+      "没关系，我们慢慢来。",
+      "先看看方法，再试一次。",
+      "别着急，换个方法想一想。"
     ]
   };
   const options = phrases[kind] || phrases.tryAgain;
   speakText(options[randInt(0, options.length - 1)], onDone, {
-    fallbackMs: kind === "correct" ? 2600 : 3000,
-    rate: 0.84,
-    pitch: 1.04
+    fallbackMs: kind === "correct" ? 3000 : 3300,
+    rate: 0.9,
+    pitch: 1.08
   });
+}
+
+function speakMilestone(correctCount, onDone) {
+  const phrases = {
+    3: [
+      "哇塞，已经答对三道题啦，继续保持！",
+      "太棒啦，三道题都被你想出来了！"
+    ],
+    5: [
+      "哇塞，你太棒了，已经答对五道题啦，加油加油！",
+      "五道题答对啦，小脑袋转得真快！"
+    ],
+    10: [
+      "太厉害啦，已经答对十道题了，今天的数学能量很满！",
+      "十道题完成啦，给自己一个大大的鼓励！"
+    ]
+  };
+  const options = phrases[correctCount];
+  if (!options) {
+    if (typeof onDone === "function") onDone();
+    return;
+  }
+  speakText(options[randInt(0, options.length - 1)], onDone, {
+    fallbackMs: 4200,
+    rate: 0.88,
+    pitch: 1.1
+  });
+}
+
+function getPendingMilestone() {
+  const correctCount = state.session.correct;
+  const milestones = [3, 5, 10];
+  const matched = milestones.find((count) => count === correctCount && !state.celebratedCorrectCounts.has(count));
+  if (matched) state.celebratedCorrectCounts.add(matched);
+  return matched || null;
 }
 
 function speakStep(text, onDone) {
@@ -1017,13 +1063,22 @@ function checkTypedAnswer() {
     els.checkBtn.disabled = true;
     els.checkBtn.textContent = "下一题马上来";
     hideTeachCard();
-    speakFeedback("correct", () => {
+    const milestone = getPendingMilestone();
+    if (milestone) {
+      els.feedback.textContent = `已经答对 ${milestone} 道题啦，真不错。`;
+    }
+    const advance = () => {
       state.isAdvancing = false;
       els.answerInput.readOnly = false;
       els.checkBtn.disabled = false;
       els.checkBtn.textContent = "确认";
       nextQuestion();
-    });
+    };
+    if (milestone) {
+      speakMilestone(milestone, advance);
+    } else {
+      speakFeedback("correct", advance);
+    }
   } else {
     els.feedback.textContent = question.tryAgain;
     els.answerInput.value = "";
