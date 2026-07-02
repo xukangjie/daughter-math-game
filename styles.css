@@ -336,7 +336,8 @@ h2 {
   box-shadow: 0 6px 16px rgba(76, 55, 22, 0.08);
 }
 
-.number-pad button[data-operator-key] {
+.number-pad button[data-operator-key],
+.number-pad button[data-compare-key] {
   background: #eef8fb;
   color: #245366;
 }
