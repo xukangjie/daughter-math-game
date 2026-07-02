@@ -60,7 +60,8 @@ const els = {
   todayStats: document.querySelector("#todayStats"),
   wrongCount: document.querySelector("#wrongCount"),
   wrongBookList: document.querySelector("#wrongBookList"),
-  operatorKeys: document.querySelectorAll("[data-operator-key]")
+  operatorKeys: document.querySelectorAll("[data-operator-key]"),
+  compareKeys: document.querySelectorAll("[data-compare-key]")
 };
 
 function defaultProgress() {
@@ -296,11 +297,12 @@ function resetTypedAdvanceState() {
 
 function makePracticeQuestion() {
   const roll = Math.random();
-  if (roll < 0.26) return makeEquationAddQuestion();
-  if (roll < 0.52) return makeEquationSubtractQuestion();
-  if (roll < 0.7) return makeMissingAddendQuestion();
-  if (roll < 0.88) return makeMissingSubtrahendQuestion();
-  return makeMissingOperatorQuestion();
+  if (roll < 0.23) return makeEquationAddQuestion();
+  if (roll < 0.46) return makeEquationSubtractQuestion();
+  if (roll < 0.64) return makeMissingAddendQuestion();
+  if (roll < 0.8) return makeMissingSubtrahendQuestion();
+  if (roll < 0.9) return makeMissingOperatorQuestion();
+  return makeCompareQuestion();
 }
 
 function makeEquationAddQuestion() {
@@ -528,6 +530,47 @@ function makeMissingOperatorQuestion() {
   };
 }
 
+function makeCompareQuestion() {
+  const leftQuestion = Math.random() < 0.5 ? makeEquationAddQuestion() : makeEquationSubtractQuestion();
+  const leftValue = leftQuestion.answer;
+  const calcOperator = leftQuestion.operation === "add" ? "+" : "-";
+  const mode = randInt(0, 2);
+  let rightValue;
+  if (mode === 0) {
+    rightValue = leftValue;
+  } else if (mode === 1) {
+    rightValue = randInt(0, Math.max(0, leftValue - 1));
+  } else {
+    rightValue = randInt(Math.min(20, leftValue + 1), 20);
+  }
+  const answer = leftValue > rightValue ? ">" : leftValue < rightValue ? "<" : "=";
+
+  return {
+    type: "equation",
+    operation: "compare",
+    answerKind: "compare",
+    left: leftQuestion.left,
+    right: leftQuestion.right,
+    calcOperator,
+    compareTarget: rightValue,
+    answer,
+    expression: `${leftQuestion.left} ${calcOperator} ${leftQuestion.right} ? ${rightValue}`,
+    kicker: "比一比，填符号",
+    text: "中间应该写 >、< 还是 =？",
+    feedback: `对了，${leftQuestion.left} ${calcOperator} ${leftQuestion.right} ${answer} ${rightValue}。`,
+    tryAgain: "先算左边，再和右边比一比。",
+    strategyName: "先算再比较",
+    teachSteps: [
+      `先只看左边：${leftQuestion.left} ${calcOperator} ${leftQuestion.right}。`,
+      `把左边算出来以后，再和右边的 ${rightValue} 比。`,
+      "左边大，就写 >；左边小，就写 <；一样大，就写 =。"
+    ],
+    visualModel: "compare",
+    animationPlan: buildComparePlan(leftQuestion.left, leftQuestion.right, leftQuestion.operation, rightValue),
+    helper: "家长提示：这类题先遮住比较符号，让孩子只算左边，再问“左边和右边谁大”。"
+  };
+}
+
 function buildMakeTenPlan(left, right, answer) {
   const toTen = 10 - left;
   const rest = right - toTen;
@@ -578,6 +621,17 @@ function buildFindOperatorPlan(left, right, result, grows) {
           { text: `最后变成 ${result}，数变小了。`, action: "compare" },
           { text: "数变小，想一想用哪个符号表示拿走。", action: "finish" }
         ]
+  };
+}
+
+function buildComparePlan(left, right, operation, compareTarget) {
+  return {
+    type: "compare",
+    steps: [
+      { text: `先算左边，${left} ${operation === "add" ? "加" : "减"} ${right}。`, action: "left" },
+      { text: `再拿左边算出的数，和右边的 ${compareTarget} 比。`, action: "compare" },
+      { text: "左边大写大于号，左边小写小于号，一样大写等号。", action: "finish" }
+    ]
   };
 }
 
@@ -863,10 +917,18 @@ function renderAnswerArea(question) {
 
   if (isTypedPractice()) {
     els.answerInput.value = "";
-    els.answerInput.inputMode = question.answerKind === "operator" ? "text" : "numeric";
-    els.answerInput.placeholder = question.answerKind === "operator" ? "+ 或 -" : "0-20";
+    const isSymbolQuestion = question.answerKind === "operator" || question.answerKind === "compare";
+    els.answerInput.inputMode = isSymbolQuestion ? "text" : "numeric";
+    els.answerInput.placeholder = question.answerKind === "operator"
+      ? "+ 或 -"
+      : question.answerKind === "compare"
+        ? ">、< 或 ="
+        : "0-20";
     els.operatorKeys.forEach((button) => {
       button.hidden = question.answerKind !== "operator";
+    });
+    els.compareKeys.forEach((button) => {
+      button.hidden = question.answerKind !== "compare";
     });
     els.answerInput.focus({ preventScroll: true });
     return;
@@ -986,7 +1048,23 @@ function normalizeTypedAnswer(raw, question) {
     return value;
   }
 
-  if (/^[+-]$/.test(raw)) {
+  if (question.answerKind === "compare") {
+    const value = raw
+      .replace(/[＞》]/g, ">")
+      .replace(/[＜《]/g, "<")
+      .replace(/[＝]/g, "=")
+      .replace(/大于/g, ">")
+      .replace(/小于/g, "<")
+      .replace(/等于/g, "=");
+    if (value !== ">" && value !== "<" && value !== "=") {
+      els.feedback.textContent = "这题写 >、< 或 =。";
+      hideTeachCard();
+      return null;
+    }
+    return value;
+  }
+
+  if (/^[+\-<>=]$/.test(raw)) {
     els.feedback.textContent = "这题写 0 到 20 以内的数字。";
     hideTeachCard();
     return null;
@@ -1106,6 +1184,7 @@ function renderAnimationFrame(question, activeIndex) {
   if (plan.type === "countOn") renderCountOnAnimation(question, activeIndex);
   if (plan.type === "findAddend") renderFindAddendAnimation(question, activeIndex);
   if (plan.type === "findOperator") renderFindOperatorAnimation(question, activeIndex);
+  if (plan.type === "compare") renderCompareAnimation(question, activeIndex);
   if (plan.type === "breakTen") renderBreakTenAnimation(question, activeIndex);
   if (plan.type === "thinkAdd") renderThinkAddAnimation(question, activeIndex);
   if (plan.type === "countBack") renderCountBackAnimation(question, activeIndex);
@@ -1168,6 +1247,15 @@ function renderFindOperatorAnimation(question, activeIndex) {
     row.appendChild(teachEquation(question.result > question.left ? "结果变大" : "结果变小"));
   }
   if (activeIndex >= 2) row.appendChild(teachEquation("想想该用哪个符号"));
+  els.animationStage.appendChild(row);
+}
+
+function renderCompareAnimation(question, activeIndex) {
+  const row = document.createElement("div");
+  row.className = "decompose-row";
+  row.appendChild(teachEquation(question.expression));
+  if (activeIndex >= 1) row.appendChild(teachEquation(`先算 ${question.left} ${question.calcOperator} ${question.right}`));
+  if (activeIndex >= 2) row.appendChild(teachEquation(`再和 ${question.compareTarget} 比`));
   els.animationStage.appendChild(row);
 }
 
@@ -1251,6 +1339,9 @@ function renderTeachVisual(question) {
   } else if (question.visualModel === "missingOperator") {
     row.appendChild(teachEquation(`${question.left} ? ${question.right} = ${question.result}`));
     row.appendChild(teachEquation(question.result > question.left ? "结果变大" : "结果变小"));
+  } else if (question.visualModel === "compare") {
+    row.appendChild(teachEquation(question.expression));
+    row.appendChild(teachEquation(`先算左边，再和 ${question.compareTarget} 比`));
   } else if (question.visualModel === "countOn") {
     row.appendChild(teachEquation(`${question.left} + ${question.right} = ?`));
     row.appendChild(teachEquation(`从 ${question.left} 往后数 ${question.right} 个`));
@@ -1400,6 +1491,7 @@ els.numberPad.addEventListener("click", (event) => {
   const key = event.target.dataset.key;
   if (!key) return;
   const isOperatorQuestion = state.currentQuestion?.answerKind === "operator";
+  const isCompareQuestion = state.currentQuestion?.answerKind === "compare";
   if (key === "clear") {
     els.answerInput.value = "";
   } else if (key === "back") {
@@ -1410,8 +1502,16 @@ els.numberPad.addEventListener("click", (event) => {
     } else {
       els.feedback.textContent = "这题写数字就可以。";
     }
+  } else if (key === ">" || key === "<" || key === "=") {
+    if (isCompareQuestion) {
+      els.answerInput.value = key;
+    } else {
+      els.feedback.textContent = "这题写数字就可以。";
+    }
   } else if (isOperatorQuestion) {
     els.feedback.textContent = "这题写 + 或 -。";
+  } else if (isCompareQuestion) {
+    els.feedback.textContent = "这题写 >、< 或 =。";
   } else if (els.answerInput.value.length < 2) {
     els.answerInput.value += key;
   }
