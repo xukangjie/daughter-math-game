@@ -1,12 +1,25 @@
 const STORAGE_KEY = "math_app_progress_v1";
+const AUDIO_BASE_PATH = "assets/audio/";
+const AUDIO_LIBRARY = {
+  correct: ["correct-1", "correct-2", "correct-3", "correct-4", "correct-5"],
+  tryAgain: ["try-again-1", "try-again-2", "try-again-3", "try-again-4", "try-again-5"],
+  reward3: ["reward-3", "reward-3-1"],
+  reward5: ["reward-5", "reward-5-1"],
+  reward10: ["reward-10", "reward-10-1"],
+  teachEnd: ["teach-end-1", "teach-end-2", "teach-end-3", "teach-end-4", "teach-end-5"]
+};
+const AUDIO_EXTENSIONS = ["mp3", "m4a", "wav"];
+const missingAudioFiles = new Set();
+let activeAudio = null;
+let progressRenderSignature = "";
 
 const games = {
-  practice: { label: "20以内加减", skill: "20以内加减" },
-  count: { label: "点点农场", skill: "数数量" },
-  add: { label: "水果篮子", skill: "加法理解" },
-  subtract: { label: "小饼干拿走", skill: "减法理解" },
+  practice: { label: "魔法算式屋", skill: "20以内加减" },
+  count: { label: "点点花田", skill: "数数量" },
+  add: { label: "水果小篮", skill: "加法理解" },
+  subtract: { label: "饼干小铺", skill: "减法理解" },
   make10: { label: "数字小屋", skill: "10以内分合" },
-  shape: { label: "图形收纳", skill: "图形分类" }
+  shape: { label: "图形收纳站", skill: "图形分类" }
 };
 
 const profileLimits = {
@@ -35,6 +48,7 @@ const els = {
   gameTiles: document.querySelectorAll(".game-tile"),
   gameLabel: document.querySelector("#gameLabel"),
   roundLabel: document.querySelector("#roundLabel"),
+  sceneBadge: document.querySelector("#sceneBadge"),
   promptKicker: document.querySelector("#promptKicker"),
   questionText: document.querySelector("#questionText"),
   visualStage: document.querySelector("#visualStage"),
@@ -209,26 +223,18 @@ function pickChineseVoice() {
 function speakText(text, onDone, options = {}) {
   const done = once(onDone);
   const spokenText = formatSpeechText(text);
-  const fallbackMs = options.fallbackMs || Math.max(4200, spokenText.length * 420);
+  const fallbackMs = options.fallbackMs || Math.max(2400, spokenText.length * 260);
   if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
     window.setTimeout(done, fallbackMs);
     return;
   }
   const utterance = new window.SpeechSynthesisUtterance(spokenText);
   utterance.lang = "zh-CN";
-  utterance.rate = options.rate || 0.82;
-  utterance.pitch = options.pitch || 1.04;
+  utterance.rate = options.rate || 0.9;
+  utterance.pitch = options.pitch || 1.02;
   const voice = pickChineseVoice();
   if (voice) utterance.voice = voice;
-  let fallback;
-  const finishIfQuiet = () => {
-    if (window.speechSynthesis.speaking) {
-      fallback = window.setTimeout(finishIfQuiet, 650);
-      return;
-    }
-    done();
-  };
-  fallback = window.setTimeout(finishIfQuiet, fallbackMs);
+  const fallback = window.setTimeout(done, fallbackMs);
   utterance.onend = () => {
     window.clearTimeout(fallback);
     done();
@@ -237,45 +243,123 @@ function speakText(text, onDone, options = {}) {
     window.clearTimeout(fallback);
     done();
   };
-  window.speechSynthesis.cancel();
+  if (options.cancel !== false) window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+}
+
+function audioKindForMilestone(correctCount) {
+  return `reward${correctCount}`;
+}
+
+function audioCandidates(kind) {
+  const names = AUDIO_LIBRARY[kind] || [];
+  const files = [];
+  names.forEach((name) => {
+    AUDIO_EXTENSIONS.forEach((extension) => {
+      const src = `${AUDIO_BASE_PATH}${name}.${extension}`;
+      if (!missingAudioFiles.has(src)) files.push(src);
+    });
+  });
+  return files;
+}
+
+function stopActiveAudio() {
+  if (!activeAudio) return;
+  activeAudio.pause();
+  activeAudio.src = "";
+  activeAudio = null;
+}
+
+function playLocalAudio(kind, onDone, onFallback) {
+  const done = once(onDone);
+  const fallbackToSpeech = once(onFallback);
+  if (typeof window.Audio !== "function") return false;
+  const candidates = shuffle(audioCandidates(kind));
+  if (!candidates.length) return false;
+
+  stopActiveAudio();
+  const startedAt = Date.now();
+  const tryNext = () => {
+    const src = candidates.shift();
+    if (!src || Date.now() - startedAt > 1800) {
+      fallbackToSpeech();
+      return;
+    }
+
+    const audio = new window.Audio(src);
+    let fallback;
+    const finish = () => {
+      window.clearTimeout(fallback);
+      if (activeAudio === audio) activeAudio = null;
+      done();
+    };
+    const miss = () => {
+      missingAudioFiles.add(src);
+      window.clearTimeout(fallback);
+      if (activeAudio === audio) activeAudio = null;
+      tryNext();
+    };
+
+    activeAudio = audio;
+    audio.preload = "auto";
+    audio.onended = finish;
+    audio.onerror = miss;
+    fallback = window.setTimeout(finish, 4500);
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(miss);
+    }
+  };
+
+  tryNext();
+  return true;
+}
+
+function playFeedback(kind, onDone) {
+  if (playLocalAudio(kind, onDone, () => speakFeedback(kind, onDone))) return;
+  speakFeedback(kind, onDone);
 }
 
 function speakFeedback(kind, onDone) {
   const phrases = {
     correct: [
-      "哇，答对啦，真不错！",
-      "嗯，想得很清楚，答对啦！",
-      "叮咚，答对啦，我们去下一题！",
-      "太好啦，这题你自己想出来了！"
+      "叮咚，小星星亮起来啦！",
+      "哇，答对啦，数字朋友很开心！",
+      "太好啦，这题你自己想出来了！",
+      "答对啦，我们去下一扇小门！"
     ],
     tryAgain: [
       "没关系，我们慢慢来。",
-      "先看看方法，再试一次。",
+      "小灯泡会帮忙，再试一次。",
       "别着急，换个方法想一想。"
+    ],
+    teachEnd: [
+      "现在你再写一次试试。",
+      "看完方法啦，自己算一算吧。",
+      "不着急，按刚才的方法来。"
     ]
   };
   const options = phrases[kind] || phrases.tryAgain;
   speakText(options[randInt(0, options.length - 1)], onDone, {
-    fallbackMs: kind === "correct" ? 3000 : 3300,
-    rate: 0.9,
-    pitch: 1.08
+    fallbackMs: kind === "correct" ? 2200 : 2600,
+    rate: 0.94,
+    pitch: 1.02
   });
 }
 
 function speakMilestone(correctCount, onDone) {
   const phrases = {
     3: [
-      "哇塞，已经答对三道题啦，继续保持！",
-      "太棒啦，三道题都被你想出来了！"
+      "哇塞，已经点亮三颗小星星啦！",
+      "太棒啦，三道小任务都被你想出来了！"
     ],
     5: [
-      "哇塞，你太棒了，已经答对五道题啦，加油加油！",
-      "五道题答对啦，小脑袋转得真快！"
+      "哇塞，已经点亮五颗小星星啦，加油加油！",
+      "五道小任务完成啦，小脑袋转得真快！"
     ],
     10: [
-      "太厉害啦，已经答对十道题了，今天的数学能量很满！",
-      "十道题完成啦，给自己一个大大的鼓励！"
+      "太厉害啦，今天已经点亮十颗小星星了！",
+      "十道小任务完成啦，给自己一个大大的鼓励！"
     ]
   };
   const options = phrases[correctCount];
@@ -284,10 +368,15 @@ function speakMilestone(correctCount, onDone) {
     return;
   }
   speakText(options[randInt(0, options.length - 1)], onDone, {
-    fallbackMs: 4200,
-    rate: 0.88,
-    pitch: 1.1
+    fallbackMs: 3200,
+    rate: 0.92,
+    pitch: 1.02
   });
+}
+
+function playMilestone(correctCount, onDone) {
+  if (playLocalAudio(audioKindForMilestone(correctCount), onDone, () => speakMilestone(correctCount, onDone))) return;
+  speakMilestone(correctCount, onDone);
 }
 
 function getPendingMilestone() {
@@ -338,7 +427,7 @@ function resetTypedAdvanceState() {
   if (!els.answerInput || !els.checkBtn) return;
   els.answerInput.readOnly = false;
   els.checkBtn.disabled = false;
-  els.checkBtn.textContent = "确认";
+  els.checkBtn.textContent = "送出";
 }
 
 function makePracticeQuestion() {
@@ -390,17 +479,17 @@ function makeEquationAddQuestion() {
     answer,
     expression: `${left} + ${right} = ?`,
     choices: buildChoices(answer, 0, 20),
-    kicker: "自己写答案",
-    text: "先想一想，再把答案写下来。",
-    feedback: `对了，${left} + ${right} = ${answer}。`,
-    tryAgain: "我们换个方法看看。",
+    kicker: "魔法算式屋",
+    text: "帮数字朋友打开这扇小门，把答案写进小窗。",
+    feedback: `小门打开啦：${left} + ${right} = ${answer}。`,
+    tryAgain: "小门还没打开，我们点亮方法小灯泡。",
     strategyName,
     teachSteps,
     visualModel: useCountOn ? "countOn" : "makeTen",
     animationPlan: useCountOn
       ? buildCountOnPlan(left, right, answer)
       : buildMakeTenPlan(left, right, answer),
-    helper: "家长提示：先让孩子自己写答案；答错时看方法卡，不急着批评。"
+    helper: "家长提示：先让孩子自己写答案；答错时只说“看看小灯泡”，不急着批评。"
   };
 }
 
@@ -449,10 +538,10 @@ function makeEquationSubtractQuestion() {
     answer,
     expression: `${start} - ${gone} = ?`,
     choices: buildChoices(answer, 0, 20),
-    kicker: "自己写答案",
-    text: "先想一想，再把答案写下来。",
-    feedback: `对了，${start} - ${gone} = ${answer}。`,
-    tryAgain: "我们换个方法看看。",
+    kicker: "饼干小铺",
+    text: "小饼干被拿走了一些，帮小店数一数还剩多少。",
+    feedback: `数清楚啦：${start} - ${gone} = ${answer}。`,
+    tryAgain: "先别急，我们点亮方法小灯泡。",
     strategyName,
     teachSteps,
     visualModel: useThinkAdd ? "thinkAdd" : useBreakTen ? "breakTen" : "countBack",
@@ -479,10 +568,10 @@ function makeMissingAddendQuestion() {
     answer,
     expression: `${left} + ? = ${total}`,
     choices: buildChoices(answer, 0, 20),
-    kicker: "找一找，缺几个",
-    text: "问号表示缺少的数，把它写出来。",
-    feedback: `对了，${left} + ${answer} = ${total}。`,
-    tryAgain: "我们从前面的数开始，数到后面的数。",
+    kicker: "寻找藏起来的数",
+    text: "问号躲起来了，从前面的数走到后面的数，找找它是几。",
+    feedback: `找到了：${left} + ${answer} = ${total}。`,
+    tryAgain: "问号还在藏，我们沿着数字路再找一次。",
     strategyName: "接着数找缺数",
     teachSteps: [
       `从 ${left} 开始，看要到 ${total}。`,
@@ -508,10 +597,10 @@ function makeMissingSubtrahendQuestion() {
     answer,
     expression: `${start} - ? = ${remaining}`,
     choices: buildChoices(answer, 0, 20),
-    kicker: "想一想，拿走几个",
-    text: "问号表示拿走的数，把它写出来。",
-    feedback: `对了，${start} - ${answer} = ${remaining}。`,
-    tryAgain: "我们把减法换成加法想一想。",
+    kicker: "拿走了几块",
+    text: "小饼干少了一些，问号就是被拿走的数量。",
+    feedback: `找到了：${start} - ${answer} = ${remaining}。`,
+    tryAgain: "我们把它换成加法小路走一走。",
     strategyName: "想加算减",
     teachSteps: [
       `把 ${start} - ? = ${remaining} 想成：${remaining} + ? = ${start}。`,
@@ -554,10 +643,10 @@ function makeMissingOperatorQuestion() {
     result,
     answer,
     expression: `${left} ? ${right} = ${result}`,
-    kicker: "找符号",
-    text: "中间应该写加号还是减号？",
-    feedback: `对了，${left} ${answer} ${right} = ${result}。`,
-    tryAgain: "先看结果是变多了，还是变少了。",
+    kicker: "符号小侦探",
+    text: "中间的符号躲起来了，看数字变多还是变少。",
+    feedback: `小侦探找对啦：${left} ${answer} ${right} = ${result}。`,
+    tryAgain: "先看结果变多还是变少，小侦探再试一次。",
     strategyName: "看变化找符号",
     teachSteps: grows
       ? [
@@ -601,10 +690,10 @@ function makeCompareQuestion() {
     compareTarget: rightValue,
     answer,
     expression: `${leftQuestion.left} ${calcOperator} ${leftQuestion.right} ? ${rightValue}`,
-    kicker: "比一比，填符号",
-    text: "中间应该写 >、< 还是 =？",
-    feedback: `对了，${leftQuestion.left} ${calcOperator} ${leftQuestion.right} ${answer} ${rightValue}。`,
-    tryAgain: "先算左边，再和右边比一比。",
+    kicker: "天平比大小",
+    text: "先算左边，再看看天平应该往哪边倒。",
+    feedback: `天平摆好啦：${leftQuestion.left} ${calcOperator} ${leftQuestion.right} ${answer} ${rightValue}。`,
+    tryAgain: "先把左边算出来，再放到天平上比一比。",
     strategyName: "先算再比较",
     teachSteps: [
       `先只看左边：${leftQuestion.left} ${calcOperator} ${leftQuestion.right}。`,
@@ -743,10 +832,10 @@ function makeCountQuestion() {
       right,
       answer,
       choices: shuffle(["左边多", "右边多", "一样多"]),
-      kicker: "比一比，哪边多",
-      text: "两块小田里，哪边的点点更多？",
+      kicker: "点点花田",
+      text: "两块小花田里，哪边的点点花更多？",
       feedback: `${left} 和 ${right} 比，${answer}。可以先数左边，再数右边。`,
-      tryAgain: "我们先数左边有几个，再数右边有几个。",
+      tryAgain: "先数左边的小花，再数右边的小花。",
       helper: "家长提示：比较多少时先让孩子分别数两边，再说出判断理由。"
     };
   }
@@ -757,8 +846,8 @@ function makeCountQuestion() {
     mode,
     answer: count,
     choices: buildChoices(count, 1, max),
-    kicker: "看一看，数一数",
-    text: "这里有几个点点？",
+    kicker: "点点花田",
+    text: "小花田里开了几个点点花？",
     feedback: `是 ${count} 个。可以从左到右，一个一个点着数。`,
     tryAgain: "我们再数一次，手指碰到一个点点就说一个数。",
     helper: "家长提示：请孩子用手指点数，不急着心算。数完后问：“最后一个数是几？”"
@@ -775,9 +864,9 @@ function makeAddQuestion() {
     right,
     answer,
     choices: buildChoices(answer, 1, 10),
-    kicker: "合起来，就是加法",
-    text: `${left} 个水果和 ${right} 个水果合起来，一共有几个？`,
-    feedback: `${left} 和 ${right} 合起来是 ${answer}。`,
+    kicker: "水果小篮",
+    text: `把 ${left} 个水果和 ${right} 个水果放进同一个小篮，一共有几个？`,
+    feedback: `小篮装好啦，${left} 和 ${right} 合起来是 ${answer}。`,
     tryAgain: "可以先数左边，再接着数右边。",
     helper: "家长提示：少说“算出来”，多说“合起来”。"
   };
@@ -793,9 +882,9 @@ function makeSubtractQuestion() {
     gone,
     answer,
     choices: buildChoices(answer, 0, 10),
-    kicker: "拿走一些，看还剩多少",
-    text: `原来有 ${start} 块小饼干，拿走 ${gone} 块，还剩几块？`,
-    feedback: `${start} 块拿走 ${gone} 块，还剩 ${answer} 块。`,
+    kicker: "饼干小铺",
+    text: `小铺原来有 ${start} 块饼干，拿走 ${gone} 块，还剩几块？`,
+    feedback: `小铺数清楚啦，还剩 ${answer} 块。`,
     tryAgain: "把拿走的遮住，数一数剩下的。",
     helper: "家长提示：用“拿走、剩下”讲故事。"
   };
@@ -811,9 +900,9 @@ function makeMake10Question() {
     part,
     answer,
     choices: buildChoices(answer, 1, 10),
-    kicker: "数字小屋，找朋友",
-    text: `${total} 可以分成 ${part} 和几？`,
-    feedback: `${total} 可以分成 ${part} 和 ${answer}。`,
+    kicker: "数字小屋",
+    text: `${total} 住在小屋里，它可以分成 ${part} 和几？`,
+    feedback: `小屋配对成功：${total} 可以分成 ${part} 和 ${answer}。`,
     tryAgain: `想一想，${part} 再添几个就到 ${total}？`,
     helper: "家长提示：鼓励孩子用点点补到目标数。"
   };
@@ -837,9 +926,9 @@ function makeShapeQuestion() {
     answer: target.label,
     counts,
     choices: shuffle(shapes.map((shape) => shape.label)),
-    kicker: "看特征，分一分",
-    text: `请找出所有${target.label}。它们应该放进哪个盒子？`,
-    feedback: `这些都是${target.label}，因为它们的形状一样。`,
+    kicker: "图形收纳站",
+    text: `图形小盒要整理啦，请找出所有${target.label}。`,
+    feedback: `收纳成功，这些都是${target.label}。`,
     tryAgain: "先看边和角，再看是不是弯弯的圆边。",
     helper: "家长提示：问孩子“你按什么标准分类？”"
   };
@@ -852,19 +941,31 @@ function render() {
   els.promptKicker.textContent = question.kicker;
   els.questionText.textContent = question.text;
   els.feedback.textContent = isTypedPractice()
-    ? "自己写一个答案。不会也没关系，可以试一试。"
+    ? "先自己想一想，把答案送进小窗。不会也没关系，可以试一试。"
     : state.profile === "play"
       ? "陪玩模式：说出你的想法就很好。"
-      : "不用着急，可以一个一个看。";
+      : "不用着急，可以一个一个找。";
   els.helperNote.textContent = question.helper;
   els.helperNote.classList.toggle("hidden", !state.parentTips);
   els.parentToggle.setAttribute("aria-pressed", String(state.parentTips));
+  if (els.sceneBadge) els.sceneBadge.dataset.scene = sceneForQuestion(question);
 
   renderActiveButtons();
   renderVisual(question);
   renderAnswerArea(question);
   hideTeachCard();
   renderProgress();
+}
+
+function sceneForQuestion(question) {
+  if (question.operation === "compare") return "scale";
+  if (question.operation === "missingOperator") return "search";
+  if (question.operation === "missingAddend" || question.operation === "missingSubtrahend") return "path";
+  if (question.operation === "subtract" || question.type === "subtract") return "cookie";
+  if (question.operation === "add" || question.type === "add") return "fruit";
+  if (question.type === "shape") return "shape";
+  if (question.type === "count") return "flower";
+  return "star";
 }
 
 function isTypedPractice() {
@@ -1034,7 +1135,7 @@ function handleChoiceAnswer(choice, button) {
 
   button.classList.add("selected", isCorrect || isPlay ? "good" : "try");
   els.feedback.textContent = isCorrect || isPlay ? question.feedback : question.tryAgain;
-  speakFeedback(isCorrect || isPlay ? "correct" : "tryAgain");
+  playFeedback(isCorrect || isPlay ? "correct" : "tryAgain");
   renderProgress();
 }
 
@@ -1071,13 +1172,13 @@ function checkTypedAnswer() {
       state.isAdvancing = false;
       els.answerInput.readOnly = false;
       els.checkBtn.disabled = false;
-      els.checkBtn.textContent = "确认";
+      els.checkBtn.textContent = "送出";
       nextQuestion();
     };
     if (milestone) {
-      speakMilestone(milestone, advance);
+      playMilestone(milestone, advance);
     } else {
-      speakFeedback("correct", advance);
+      playFeedback("correct", advance);
     }
   } else {
     els.feedback.textContent = question.tryAgain;
@@ -1203,7 +1304,7 @@ function playTeachAnimation(question, onDone) {
   const token = ++state.animationToken;
   const steps = question.animationPlan?.steps || [];
   if (!steps.length) {
-    speakFeedback("tryAgain", onDone);
+    playFeedback("tryAgain", onDone);
     return;
   }
 
@@ -1212,7 +1313,7 @@ function playTeachAnimation(question, onDone) {
     if (token !== state.animationToken) return;
     if (index >= steps.length) {
       els.animationStage.classList.remove("is-speaking");
-      if (typeof onDone === "function") onDone();
+      playFeedback("teachEnd", onDone);
       return;
     }
 
@@ -1221,10 +1322,10 @@ function playTeachAnimation(question, onDone) {
     els.stepCaption.textContent = step.text;
     els.animationStage.classList.add("is-speaking");
     index += 1;
-    speakStep(step.text, () => {
+    window.setTimeout(() => {
       if (token !== state.animationToken) return;
       window.setTimeout(playNext, 300);
-    });
+    }, step.delay || 1100);
   };
 
   playNext();
@@ -1440,14 +1541,24 @@ function nextQuestion() {
 }
 
 function showRoundSummary() {
-  els.summaryTitle.textContent = "这一小轮完成了";
+  els.summaryTitle.textContent = "这一小轮点亮啦";
   els.summaryText.textContent = isTypedPractice()
-    ? "今天先到这里也可以。下次继续练“先想方法，再写答案”。"
-    : "可以喝口水、伸伸手。下次继续从生活里的数量开始。";
+    ? "今天先到这里也可以。下次继续用小方法打开算式门。"
+    : "可以喝口水、伸伸手。下次继续去小花园找数量。";
 }
 
 function renderProgress() {
   const today = state.progress.daily[dateKey()] || emptyRecord();
+  const wrongBook = Array.isArray(state.progress.wrongBook) ? state.progress.wrongBook : [];
+  const signature = JSON.stringify({
+    session: state.session,
+    today,
+    skills: Object.keys(games).map((key) => state.progress.skills[key] || { attempts: 0, supported: 0 }),
+    wrong: wrongBook.slice(0, 6).map((item) => item.id)
+  });
+  if (signature === progressRenderSignature) return;
+  progressRenderSignature = signature;
+
   els.sessionStats.textContent = formatRecord(state.session);
   els.todayStats.textContent = formatRecord(today);
   els.progressBars.innerHTML = "";
@@ -1465,22 +1576,21 @@ function renderProgress() {
     `;
     els.progressBars.appendChild(row);
   });
-  renderWrongBook();
+  renderWrongBook(wrongBook);
 }
 
 function formatRecord(record) {
   return `${record.attempts || 0} 题 · 对 ${record.correct || 0} · 再想 ${record.wrong || 0}`;
 }
 
-function renderWrongBook() {
-  const wrongBook = Array.isArray(state.progress.wrongBook) ? state.progress.wrongBook : [];
+function renderWrongBook(wrongBook = Array.isArray(state.progress.wrongBook) ? state.progress.wrongBook : []) {
   els.wrongCount.textContent = wrongBook.length ? `${wrongBook.length} 道待复习` : "还没有错题";
   els.wrongBookList.innerHTML = "";
 
   if (!wrongBook.length) {
     const empty = document.createElement("div");
     empty.className = "empty-wrong";
-    empty.textContent = "现在还没有错题。答错的题会自动放到这里。";
+    empty.textContent = "现在复习小篮还是空的。需要再看的题会自动放到这里。";
     els.wrongBookList.appendChild(empty);
     return;
   }

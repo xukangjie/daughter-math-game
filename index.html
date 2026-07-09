@@ -10,46 +10,47 @@
     <div class="app-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">数学启蒙小游戏</p>
-          <h1>小小数感乐园</h1>
+          <p class="eyebrow">每天一小会儿</p>
+          <h1>星星数学乐园</h1>
+          <p class="topbar-subtitle">做几道小任务，帮数字朋友点亮今天的小星星。</p>
         </div>
         <button class="parent-toggle" id="parentToggle" type="button" aria-pressed="false">
-          陪练提示
+          家长小提示
         </button>
       </header>
 
       <main>
         <section class="profile-panel" aria-label="选择模式">
           <button class="profile-card active" type="button" data-profile="sister">
-            <span class="profile-name">姐姐</span>
-            <span class="profile-desc">6 岁 · 大班 · 入学准备</span>
+            <span class="profile-name">姐姐闯关</span>
+            <span class="profile-desc">魔法算式 · 20 以内 · 自己写答案</span>
           </button>
           <button class="profile-card" type="button" data-profile="younger">
-            <span class="profile-name">妹妹</span>
-            <span class="profile-desc">4 岁 · 数一数 · 找一找</span>
+            <span class="profile-name">妹妹探索</span>
+            <span class="profile-desc">点点花田 · 图形小盒 · 轻轻玩</span>
           </button>
           <button class="profile-card" type="button" data-profile="play">
-            <span class="profile-name">陪玩</span>
-            <span class="profile-desc">不计对错 · 一起说思路</span>
+            <span class="profile-name">一起陪玩</span>
+            <span class="profile-desc">不抢速度 · 说说想法 · 放轻松</span>
           </button>
         </section>
 
         <section class="learning-map" aria-label="选择小游戏">
           <button class="game-tile active" type="button" data-game="practice">
             <span class="tile-art practice-art" aria-hidden="true"></span>
-            <span>20以内加减</span>
+            <span>魔法算式屋</span>
           </button>
           <button class="game-tile" type="button" data-game="count">
             <span class="tile-art dots-art" aria-hidden="true"></span>
-            <span>点点农场</span>
+            <span>点点花田</span>
           </button>
           <button class="game-tile" type="button" data-game="add">
             <span class="tile-art basket-art" aria-hidden="true"></span>
-            <span>水果篮子</span>
+            <span>水果小篮</span>
           </button>
           <button class="game-tile" type="button" data-game="subtract">
             <span class="tile-art cookie-art" aria-hidden="true"></span>
-            <span>小饼干拿走</span>
+            <span>饼干小铺</span>
           </button>
           <button class="game-tile" type="button" data-game="make10">
             <span class="tile-art house-art" aria-hidden="true"></span>
@@ -57,7 +58,7 @@
           </button>
           <button class="game-tile" type="button" data-game="shape">
             <span class="tile-art shape-art" aria-hidden="true"></span>
-            <span>图形收纳</span>
+            <span>图形收纳站</span>
           </button>
         </section>
 
@@ -78,7 +79,7 @@
           <div class="visual-stage" id="visualStage" aria-label="题目图像"></div>
 
           <div class="typed-answer hidden" id="typedAnswerPanel">
-            <label class="answer-label" for="answerInput">把答案写在这里</label>
+            <label class="answer-label" for="answerInput">答案小窗</label>
             <div class="answer-entry">
               <input
                 id="answerInput"
@@ -90,7 +91,7 @@
                 autocomplete="off"
                 aria-label="输入答案"
               />
-              <button class="primary-btn check-btn" id="checkBtn" type="button">确认</button>
+              <button class="primary-btn check-btn" id="checkBtn" type="button">送出</button>
             </div>
             <div class="number-pad" id="numberPad" aria-label="数字键盘">
               <button type="button" data-key="1">1</button>
@@ -118,7 +119,7 @@
           <p class="feedback" id="feedback">不用着急，可以一个一个数。</p>
 
           <div class="teach-card hidden" id="teachCard">
-            <p class="eyebrow">我们换个方法看看</p>
+            <p class="eyebrow">方法小灯泡</p>
             <h3 id="teachTitle">凑十法</h3>
             <div class="animation-stage" id="animationStage" aria-label="动画讲解"></div>
             <p class="step-caption" id="stepCaption">先看这一步。</p>
@@ -141,9 +142,9 @@
 
         <section class="progress-card" aria-label="练习记录">
           <div>
-            <p class="eyebrow">今天的感觉</p>
-            <h2 id="summaryTitle">先玩一小轮</h2>
-            <p id="summaryText">每轮 6 题，答完就休息一下。这里不排名，也不抢速度。</p>
+            <p class="eyebrow">今日小花园</p>
+            <h2 id="summaryTitle">先点亮一小颗星</h2>
+            <p id="summaryText">每轮 6 题，做完就可以休息。这里不排名，也不抢速度。</p>
           </div>
           <div class="record-panel">
             <div class="stat-grid">
@@ -159,7 +160,7 @@
             <div class="progress-bars" id="progressBars"></div>
             <div class="wrong-book">
               <div class="wrong-book-head">
-                <h3>错题本</h3>
+                <h3>复习小篮</h3>
                 <span id="wrongCount">还没有错题</span>
               </div>
               <div class="wrong-list" id="wrongBookList"></div>
